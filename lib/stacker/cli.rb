@@ -167,8 +167,12 @@ YAML
 
           defaults = config.fetch 'defaults', {}
           stacks = config.fetch 'stacks', {}
-
-          Region.new options['region'], defaults, stacks, templates_path
+          template_path = File.join working_path, config.fetch('template_path', 'templates')
+          unless File.exists? template_path
+              Stacker.logger.fatal "#{template_path} does not exist. Please configure it in #{options['region']}.yml."
+              exit 1
+          end
+          Region.new options['region'], defaults, stacks, template_path
         else
           Stacker.logger.fatal "#{options['region']}.yml does not exist. Please configure or use stacker init"
           exit 1
@@ -202,10 +206,6 @@ YAML
     rescue Stacker::Stack::Error => err
       Stacker.logger.fatal err.message
       exit 1
-    end
-
-    def templates_path
-      File.join working_path, 'templates'
     end
 
     def working_path

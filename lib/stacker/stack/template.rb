@@ -3,6 +3,7 @@ require 'json'
 require 'memoist'
 require 'stacker/differ'
 require 'stacker/stack/component'
+require 'stacker/dsl'
 
 module Stacker
   class Stack
@@ -19,7 +20,11 @@ module Stacker
       def local
         @local ||= begin
           if exists?
-            template = JSON.parse File.read path
+            if path.end_with? '.rb'
+                template = ruby_template path
+            else
+                template = JSON.parse File.read path
+            end
             template['AWSTemplateFormatVersion'] ||= FORMAT_VERSION
             template
           else
@@ -52,12 +57,23 @@ module Stacker
       end
 
       private
-
+      def ruby_template template_path
+          content = File.read template_path
+          tpl = Stacker::DSL.template stack.name do
+              eval(content)
+          end
+          JSON.parse tpl.to_json
+      end
       def path
-        @path ||= File.join(
-          stack.region.templates_path,
-          "#{stack.options.fetch('template_name', stack.name)}.json"
-        )
+        if @path.nil?
+            [File.join(stack.region.templates_path,
+                "#{stack.options.fetch('template_name', stack.name)}.json"),
+            File.join(stack.region.templates_path,
+                "#{stack.options.fetch('template_name', stack.name)}.rb")].each { |f|
+                @path = f if File.exists?(f)
+            }
+        end
+        @path
       end
 
       class JSONFormatter

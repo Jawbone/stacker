@@ -1,241 +1,246 @@
 require 'json'
 require 'set'
+
 module Stacker
     module DSL
-        def self.jsonify_name name
-            name.to_s.gsub(/([a-z]{1})([A-Z]{1})/, '\1_\2').gsub('_', ' ').split.map {|w| w.capitalize }.join('')
-        end
-        CLOUDFORMATION_VERSION = "2010-09-09"
-        class TemplatePart
-            def initialize template, name, &block
-                @name = name
-                @template = template
-                @hash_map = {}
-                instance_eval &block unless block.nil?
-            end
+        # I have no idea what i'm doing or why I'm doing it, but I'm doing the shit out of it
+        module TemplatePart
+            module ClassMethods
+                def element name, opts = {}
+                    var_name = "@#{name.to_s}".to_sym
 
-            def self.json_field name, &block
-                define_method name do |arg=nil|
-                    json_fields << name.to_sym
-                    block.call(arg)
+                    define_method name.to_sym do |arg=nil|
+                        instance_variable_set var_name, arg unless arg.nil?
+                        instance_variable_get var_name
+                    end
+                    begin
+                        elements = self.send :class_variable_get, :@@elements
+                    rescue
+                        elements = {}
+                    end
+                    elements[name] = opts
+                    self.send :class_variable_set, :@@elements, elements
+                    self.send :class_variable_get, :@@elements
+                end
+                def elements
+                    self.send :class_variable_get, :@@elements
                 end
             end
+            def self.included base
+                base.extend ClassMethods
+            end
+
+            def initialize template, name, opts={}, &block
+                @template = template
+                @name = name
+                opts.each do |k,v|
+                    send k, v
+                end
+                instance_eval &block
+            end
+
+            attr_reader :template, :name
 
             def to_hash
-                res = {}
-                json_fields.each do |k|
-                    res[to_json_name(k)] = to_json_value(k, send(k))
-                end
-                @hash_map.each do |k, v|
-                    if respond_to?(k)
-                        res[to_json_name(k)] = to_json_value(k, send(k))
-                    elsif @hash_map.has_key?(k)
-                        res[to_json_name(k)] = to_json_value(k, @hash_map[k])
+                hash = {}
+                self.class.elements.each do |k,v|
+                    val = self.send k.to_sym
+                    if v.has_key? :transform
+                        val = v[:transform].call val
                     end
+                    hash[k] = val unless val.nil?
                 end
-                res
+                hash
+            end
+        end
+
+        module TemplateFunctions
+            def ref target
+                {"Ref" => target}
             end
 
-            def method_missing method_name, *args, &block
-                if block.nil?
-                    @hash_map[method_name] = args.length == 1 ? args[0] : args
-                else
-                    @hash_map[method_name] = TemplatePart.new(@template, to_json_name(method_name), &block)
-                end
+            def stack_id
+                ref 'AWS::StackId'
             end
-
-            def ref name
-                {"Ref" => name.kind_of?(Symbol) ? to_json_name(name) : name }
-            end
-
             def base64 value
-                {"Fn::Base64" => value }
+                {'Fn::Base64' => value }
             end
-
-            def findInMap map, top_key, second_key
-                {"Fn::FindInMap" => [map, top_key, second_key] }
+            def findInMap map, top, second
+                {'Fn::FindInMap' => [map, top, second]}
+            end
+            def getaz region=nil
+                region = self.region if region.nil?
+                {'Fn::GetAZs' => region }
             end
             def getatt resource, attribute
-                {"Fn::GetAtt" => [resource, attribute] }
-            end
-            def getazs region
-                {"Fn::GetAZs" => region }
+                {'Fn::GetAtt' => [resource, attribute] }
             end
             def join delimiter, *args
-                {"Fn::Join" => [delimiter, args] }
+                {'Fn::Join' => [delimiter, args] }
             end
             def select idx, list
-                {"Fn::Select" => [idx, list] }
+                {'Fn::Select' => [idx, list] }
             end
             def account_id
-                ref('AWS::AccountId')
+                ref 'AWS::AccountId'
             end
             def notification_arns
-                ref('AWS::NotificationARNs')
+                ref 'AWS::NotificationARNS'
             end
             def no_value
-                ref('AWS::NoValue')
+                ref 'AWS::NoValue'
             end
             def region
-                ref('AWS::Region')
-            end
-            def stack_id
-                ref('AWS::StackId')
+                ref 'AWS::Region'
             end
             def stack_name
-                ref('AWS::StackName')
-            end
-            private
-            def json_fields
-                @json_fields ||= Set.new
-            end
-            def to_json_name name
-                if respond_to?("#{name}_json_name".to_sym)
-                    send "#{name}_json_name".to_sym
-                else
-                    ::Stacker::DSL.jsonify_name(name)
-                end
-            end
-            def to_json_value key, value
-                if respond_to?("#{key}_json_value".to_sym)
-                    send "#{key}_json_value".to_sym, value
-                elsif value.respond_to?(:to_hash)
-                    value.to_hash
-                else
-                    value
-                end
+                ref 'AWS::StackName'
             end
         end
 
-        class Mapping
-            attr_accessor :name
-            attr_reader :values
+        class Parameter
+            include TemplatePart
+            include TemplateFunctions
 
-            def initialize name, &block
-                @name = name
-                @values = {}
-                instance_eval &block unless block.nil?
+            element :Type
+            element :Description
+            element :AllowedPattern
+            element :MaxLength
+            element :MaxValue
+            element :MinLength
+            element :MinValue
+            element :Default
+
+            def Type arg=nil
+                @Type = arg.downcase unless arg.nil?
+                raise "Invalid parameter type #{@Type}" unless @Type == :string or @Type == :number
+                @Type.to_s.capitalize
             end
 
-            def method_missing method, *args, &block
-                @values[method.to_s] = args[0]
+            alias_method :type, :Type
+        end
+        class Resource
+            include TemplatePart
+            include TemplateFunctions
+            class Properties
+                include TemplateFunctions
+
+                def method_missing method_name, *args, &block
+                    properties[method_name] = args.length == 1 ? args[0] : args
+                end
+
+                def properties
+                    @properties ||= {}
+                end
             end
+
+            element :Type
+            element :Properties, :transform => Proc.new { |arg| arg.properties }
+            element :DependsOn
+
+            def Properties &block
+                @properties ||= Properties.new
+                @properties.instance_eval &block unless block.nil?
+                @properties
+            end
+
+            def output name, opts = {}, &block
+                my_name = self.name
+                output = template.output name do
+                    if opts.has_key? :att
+                        Value getatt(self.name, opts[:att])
+                    else
+                        Value ref(my_name)
+                    end
+                    Description opts[:description] if opts.has_key? :description
+                end
+                output.instance_eval &block unless block.nil?
+            end
+
+            alias_method :properties, :Properties
+            alias_method :type, :Type
         end
 
-        class Parameter < TemplatePart
+        class Output
+            include TemplatePart
+            include TemplateFunctions
 
-            json_field :type do |arg=nil|
-                unless arg.nil?
-                    raise "Invalid parameter type" unless arg == :string || arg == :number
-                    @type = arg
-                end
-                @type
-            end
-            json_field :max_length do |arg=nil|
-                unless arg.nil?
-                    raise "max_length is only valid for strings" unless @type == :string
-                    @max_length = arg
-                end
-                @max_length
-            end
-            json_field :min_length do |arg=nil|
-                unless arg.nil?
-                    raise "min_length is only valid for strings" unless @type == :string
-                    @min_length = arg
-                end
-                @min_length
-            end
+            element :Description
+            element :Value
+            element :Condition
 
-            json_field :max_value do |arg=nil|
-                unless arg.nil?
-                    raise "max_value is only valid for numbers." unless @type == :number
-                    @max_value = arg
-                end
-                @max_value
-            end
-
-            json_field :min_value do |arg=nil|
-                unless arg.nil?
-                    raise "min_value is only valid for numbers" unless @type == :number
-                    @min_value = arg
-                end
-                @min_value
-            end
-
-            def type_json_value val
-                val.to_s.capitalize
-            end
         end
-        class Resource < TemplatePart
-            json_field :depends_on do |arg=nil|
-                unless arg.nil?
-                    @depends_on = ::Stacker::DSL.jsonify_name(arg)
-                end
-                @depends_on
-            end
-        end
-
-        class Output < TemplatePart
-        end
-
         class Template
+            CLOUDFORMATION_VERSION = '2010-09-09'
             attr_accessor :description, :version, :name
 
             def initialize name, description = nil, &block
                 @name = name
                 @description = description
-                @mappings = {}
-                @outputs = {}
-                @resources = {}
-                @parameters = {}
                 @version = nil
                 instance_eval &block unless block.nil?
             end
             def description desc
                 @description = desc
             end
-            def parameter name, &block
-                raise "Parameter name already used" if @parameters.has_key?(name.to_s.capitalize)
-                @parameters[name.to_s.capitalize] = Parameter.new(self, name, &block)
+            def parameter name, opts = {}, &block
+                raise "Parameter #{name} already exists" if parameters.has_key? name
+                parameters[name] = Parameter.new self, name, opts, &block
             end
             def mapping map_name, data
-                map_key = map_name.to_s.capitalize
-                raise "Mapping name already exists!" if @mappings.has_key?(map_key)
-                @mappings[map_key] = data
+                raise "Mapping #{name} already exists" if mappings.has_key? map_name
+                mappings[map_name] = data
             end
-            def resource name, &block
-                key = name.to_s.capitalize
-                raise "Resource name already exists!" if @resources.has_key?(key)
-                @resources[key] = Resource.new(self, name, &block)
+            def resource name, opts = {}, &block
+                raise "Resource #{name} already exists" if resources.has_key? name
+                resources[name] = Resource.new self, name, opts, &block
             end
-            def output name, &block
-                key = name.to_s.capitalize
-                raise "Output already exists with that name!" if @outputs.has_key?(key)
-                @outputs[key] = Output.new(self, name, &block)
+            def output name, opts = {}, &block
+                raise "Output #{name} already exists" if outputs.has_key? name
+                outputs[name] = Output.new self, name, opts, &block
             end
             def for_json what
                 h = {}
                 what.each do |name,val|
-                    h[::Stacker::DSL.jsonify_name name] = val.to_hash
+                    h[name] = val.to_hash
                 end
                 h
             end
-            def to_json
-                JSON.pretty_generate({
+            def to_hash
+                {
                     "AWSTemplateFormatVersion" => @version || CLOUDFORMATION_VERSION,
                     "Description" => @description || "Some stack.",
-                    "Parameters" => for_json(@parameters) || {},
-                    "Mappings" => for_json(@mappings) || {},
-                    "Resources" => for_json(@resources) || {},
-                    "Outputs" => for_json(@outputs) || {},
-                })
+                    "Parameters" => for_json(parameters) || {},
+                    "Mappings" => for_json(mappings) || {},
+                    "Resources" => for_json(resources) || {},
+                    "Outputs" => for_json(outputs) || {},
+                }
+            end
+            def to_json
+                JSON.pretty_generate(to_hash)
             end
             private
-
+            def mappings
+                @mappings ||= {}
+            end
+            def resources
+                @resources ||= {}
+            end
+            def parameters
+                @parameters ||= {}
+            end
+            def outputs
+                @outputs ||= {}
+            end
         end
 
         def self.template name, description = nil, &block
             Template.new(name, description, &block)
+        end
+        def self.file_to_template file
+            t = Template.new(File.basename file)
+            t.instance_eval File.read(file), file
+            t
         end
     end
 end

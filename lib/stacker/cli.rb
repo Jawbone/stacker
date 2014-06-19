@@ -2,6 +2,7 @@ require 'benchmark'
 require 'stacker'
 require 'thor'
 require 'yaml'
+require 'stacker/dsl'
 
 module Stacker
   class Cli < Thor
@@ -111,6 +112,16 @@ module Stacker
           Stacker.logger.warn "#{stack.name} does not exist"
         end
       end
+    end
+
+    desc "dsltojson [RUBY_FILE]", "Turn a ruby DSL disaster into a JSON disaster."
+    def dsltojson template_name = nil
+        if File.exists? template_name then
+            template = Stacker::DSL.file_to_template template_name
+            puts Stacker::Stack::Template::JSONFormatter.format template.to_hash
+        else
+            Stacker.logger.warn "#{template_name} does not exist."
+        end
     end
 
     private

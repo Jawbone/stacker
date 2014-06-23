@@ -115,9 +115,15 @@ module Stacker
     end
 
     desc "dsltojson [RUBY_FILE]", "Turn a ruby DSL disaster into a JSON disaster."
-    def dsltojson template_name = nil
+    option :context, :type => :string, :desc => 'YAML file containing template context.'
+    def dsltojson template_name
         if File.exists? template_name then
-            template = Stacker::DSL.file_to_template template_name
+            if options[:context]
+                context = context_from_file options[:context]
+            else
+                context = {}
+            end
+            template = Stacker::DSL.file_to_template template_name, context
             puts Stacker::Stack::Template::JSONFormatter.format template.to_hash
         else
             Stacker.logger.warn "#{template_name} does not exist."
@@ -125,7 +131,10 @@ module Stacker
     end
 
     private
-
+    def context_from_file path
+        raise "File #{path} does not exist." unless File.exists? path
+        YAML.load_file path
+    end
     def init_project path
       project_path = File.expand_path path
 

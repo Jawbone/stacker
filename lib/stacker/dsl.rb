@@ -174,10 +174,11 @@ module Stacker
             CLOUDFORMATION_VERSION = '2010-09-09'
             attr_accessor :description, :version, :name
 
-            def initialize name, description = nil, &block
+            def initialize name, description = nil, context = nil, &block
                 @name = name
                 @description = description
                 @version = nil
+                @context = context
                 instance_eval &block unless block.nil?
             end
             def description desc
@@ -232,13 +233,16 @@ module Stacker
             def outputs
                 @outputs ||= {}
             end
+            def context
+                @context ||= {}
+            end
         end
 
-        def self.template name, description = nil, &block
-            Template.new(name, description, &block)
+        def self.template name, description = nil, context = nil, &block
+            Template.new name, description, context, &block
         end
-        def self.file_to_template file
-            t = Template.new(File.basename file)
+        def self.file_to_template file, context = nil
+            t = Template.new File.basename(file), nil, context
             t.instance_eval File.read(file), file
             t
         end

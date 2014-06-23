@@ -58,11 +58,9 @@ module Stacker
 
       private
       def ruby_template template_path
-          content = File.read template_path
-          tpl = Stacker::DSL.template stack.name do
-              eval(content)
-          end
-          JSON.parse tpl.to_json
+          context = self.stack.options.fetch 'template_context', {}
+          dsl_template = Stacker::DSL.file_to_template template_path, context
+          JSON.parse dsl_template.to_json
       end
       def path
         if @path.nil?

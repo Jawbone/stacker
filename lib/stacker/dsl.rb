@@ -105,11 +105,13 @@ module Stacker
             element :Type
             element :Description
             element :AllowedPattern
+            element :AllowedValues
             element :MaxLength
             element :MaxValue
             element :MinLength
             element :MinValue
             element :Default
+            element :ConstraintDescription
 
             def Type arg=nil
                 @Type = arg.downcase unless arg.nil?

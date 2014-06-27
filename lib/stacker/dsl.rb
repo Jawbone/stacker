@@ -249,6 +249,10 @@ module Stacker
             def context
                 @context ||= {}
             end
+            def load_file path
+                content = File.read path
+                eval content
+            end
         end
 
         def self.template name, description = nil, context = nil, &block

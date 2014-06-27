@@ -96,6 +96,17 @@ module Stacker
             def stack_name
                 ref 'AWS::StackName'
             end
+
+            def userdata filename
+                joinlist = []
+                content = File.read filename
+                while content.length > 0
+                    l, m, content = content.partition /\{\{.*\}\}/
+                    joinlist << l if l.length > 0
+                    joinlist << instance_eval(m[2..-3]) if m.length > 0
+                end
+                base64(join '', *joinlist)
+            end
         end
 
         class Parameter
@@ -149,8 +160,8 @@ module Stacker
             def output name, opts = {}, &block
                 my_name = self.name
                 output = template.output name do
-                    if opts.has_key? :att
-                        Value getatt(self.name, opts[:att])
+                    if opts.has_key? :attr
+                        Value getatt(my_name, opts[:attr])
                     else
                         Value ref(my_name)
                     end
